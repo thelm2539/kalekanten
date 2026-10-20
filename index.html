@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=860">
+<title>Scrapbook / projects</title>
+<style>
+/* Layout mirrors the reference: 720px absolute grid, 96px cells on a 104px pitch, Verdana 10/16, black bold links */
+body{margin:0;background:#fff;color:#353535;font:10px/16px Verdana,sans-serif;position:relative;min-height:2000px}
+#bg{position:absolute;left:0;top:0;pointer-events:none}
+#wrap{position:absolute;left:104px;width:720px;user-select:none;-webkit-user-select:none}
+#logo{position:absolute;left:0;top:0;width:220px;height:62px;font:italic 30px/62px "Courier New",monospace;letter-spacing:-1px;color:#222}
+#nav{position:absolute;top:75px;left:0;font-weight:700;height:24px;white-space:nowrap}
+a{color:#000;text-decoration:none;font-weight:700}
+a:hover{text-decoration:underline}
+#nav a{margin-right:4px}
+#nav a.current{text-decoration:underline}
+.row{position:absolute;left:0;height:100px}
+.cell{position:absolute;top:0;width:96px;height:96px}
+.cell img{display:block;width:96px;height:96px;-webkit-user-drag:none}
+.label{font:bold 9px/14px Verdana,sans-serif;margin-top:-4px;height:96px}
+.label .date{font-weight:400}
+</style>
+</head>
+<body>
+<canvas id="bg" width="260" height="240"></canvas>
+<div id="wrap">
+  <div id="logo">scrapbook</div>
+  <div id="nav"></div>
+  <div id="grid"></div>
+</div>
+
+<script>
+/* ---------- content: edit this ---------- */
+const SECTIONS = ['projects','music','films','images','text','code','links','about','contact','members'];
+// null = empty paper cell. Label cells take the grid slot given by {row, col} (1-based).
+const PROJECTS = [
+  {row:1,col:2,title:'Sketchpad',date:'30.04.2005',links:[['launch','#'],['info','#']]},
+  {row:2,col:6,title:'Shaker',date:'30.11.2004',links:[['launch','#'],['info','#']]},
+  {row:3,col:1,title:'Square Root',date:'25.03.1999<br>Update 11.11.2004',links:[['launch','#'],['info','#']]},
+  {row:4,col:4,title:'Lightning',date:'30.08.2004',links:[['launch','#'],['info','#']]},
+  {row:5,col:2,title:'The Source',date:'Commission 27.07.2004',links:[['images','#'],['info','#']]},
+  {row:5,col:5,title:'Gallery',date:'Commission 30.05.2004',links:[['images','#'],['info','#']]},
+  {row:5,col:7,title:'Vapor',date:'Proposal 24.01.2004',links:[['launch','#'],['info','#']]},
+  {row:6,col:3,title:'Card 2003',date:'20.12.2003',links:[['launch','#']]},
+  {row:6,col:4,title:'Light Breeze',date:'08.04.2003',links:[['launch','#'],['info','#']]},
+];
+const ROWS = 11, COLS = 7, PITCH = 104, TOP = 175, FRAMES = 8;
+
+/* ---------- nav ---------- */
+document.getElementById('nav').innerHTML = SECTIONS.map(s =>
+  `<a href="#" class="${s==='projects'?'current':''}">${s}</a>`).join('<span style="margin-right:4px"> · </span>')
+  .replace(/<span/g,'<span').replace(/<\/a><span/g,'</a><span');
+// keep it on one line like the reference
+document.getElementById('nav').style.display = 'flex';
+
+/* ---------- procedural crumpled-paper frames (original art) ---------- */
+function rng(seed){return()=>((seed=(seed*1664525+1013904223)>>>0)/4294967296)}
+function makeFrame(k, seed){
+  const c=document.createElement('canvas');c.width=c.height=96;const g=c.getContext('2d');
+  const t=(k-1)/(FRAMES-1), r=rng(seed*97+k*13);
+  const N=7, cx=46, cy=44;
+  const w=lerp(64,28,t), h=lerp(46,28,t);
+  g.shadowColor='rgba(0,0,0,.35)';g.shadowBlur=6;g.shadowOffsetX=4;g.shadowOffsetY=6;
+  // jittered grid of points over the sheet
+  const pts=[];
+  for(let j=0;j<=N;j++){pts[j]=[];for(let i=0;i<=N;i++){
+    const u=i/N-.5,v=j/N-.5, edge=(i==0||j==0||i==N||j==N);
+    const jit=t*9*(edge?.7:1);
+    pts[j][i]=[cx+u*w+(r()-.5)*jit*2, cy+v*h+(r()-.5)*jit*2];
+  }}
+  const clip=new Path2D();
+  clip.moveTo(...pts[0][0]);for(let i=1;i<=N;i++)clip.lineTo(...pts[0][i]);
+  for(let j=1;j<=N;j++)clip.lineTo(...pts[j][N]);
+  for(let i=N-1;i>=0;i--)clip.lineTo(...pts[N][i]);
+  for(let j=N-1;j>=0;j--)clip.lineTo(...pts[j][0]);
+  clip.closePath();
+  g.fillStyle='#e8e8e8';g.fill(clip);
+  g.shadowColor='transparent';
+  g.save();g.clip(clip);
+  const tri=(a,b,c2)=>{const s=.55+(r()-.5)*(.25+t*.9);const v=Math.max(30,Math.min(255,Math.round(235*s+10)));
+    g.fillStyle=`rgb(${v},${v},${v})`;g.strokeStyle=g.fillStyle;g.lineWidth=.6;
+    g.beginPath();g.moveTo(...a);g.lineTo(...b);g.lineTo(...c2);g.closePath();g.fill();g.stroke()};
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){
+    const a=pts[j][i],b=pts[j][i+1],d=pts[j+1][i],e=pts[j+1][i+1];
+    tri(a,b,d);tri(b,e,d);
+  }
+  g.restore();
+  // torn perforated bottom edge on flat frames
+  if(t<.5){g.fillStyle='#fff';for(let x=0;x<=N*2;x++){g.beginPath();g.arc(cx-w/2+x*(w/(N*2)),pts[N][0][1]+1,1.6*(1-t*2),0,7);g.fill()}}
+  g.strokeStyle='rgba(0,0,0,.25)';g.lineWidth=.8;g.stroke(clip);
+  return c.toDataURL();
+}
+const lerp=(a,b,t)=>a+(b-a)*t;
+const frameSets=[...Array(FRAMES)].map((_,s)=>[...Array(FRAMES)].map((_,k)=>makeFrame(k+1,s+1)));
+// each cell picks one of the 8 sheets, then flips within that sheet
+
+/* ---------- grid ---------- */
+const grid=document.getElementById('grid');
+const labelAt=new Map(PROJECTS.map(p=>[p.row+','+p.col,p]));
+const pick=rng(42);
+for(let r=1;r<=ROWS;r++){
+  const row=document.createElement('div');row.className='row';row.style.top=(TOP+(r-1)*PITCH)+'px';
+  for(let c=1;c<=COLS;c++){
+    const cell=document.createElement('div');cell.className='cell';cell.style.left=((c-1)*PITCH)+'px';
+    const p=labelAt.get(r+','+c);
+    if(p){
+      cell.classList.add('label');
+      cell.innerHTML=`${p.title}<div class="date">${p.date}</div><br>`+p.links.map(([t,h])=>`<a href="${h}">» ${t}</a>`).join('<br>');
+    }else{
+      const set=Math.floor(pick()*FRAMES), start=Math.floor(pick()*FRAMES);
+      const img=document.createElement('img');img.alt='';img.draggable=false;
+      img.dataset.set=set;img.dataset.n=start;img.src=frameSets[set][start];
+      cell.appendChild(img);
+      cell.addEventListener('mouseenter',e=>startFlip(img));
+      cell.addEventListener('mousemove',e=>{mx=e.pageX;my=e.pageY});
+      cell.addEventListener('mouseleave',()=>stopFlip());
+    }
+    row.appendChild(cell);
+  }
+  grid.appendChild(row);
+}
+document.body.style.minHeight=(TOP+ROWS*PITCH+60)+'px';
+
+/* ---------- hover flip: same rules as the reference ----------
+   a 30ms timer; advance one frame whenever the pointer has travelled >~13px (dist² > 170);
+   ping-pong between frame 1 and FRAMES; keep running 400ms after mouseout. */
+let mx=0,my=0,ox=0,oy=0,dir=1,timer=null,stopT=null,cur=null;
+function startFlip(img){
+  clearTimeout(stopT);clearInterval(timer);cur=img;
+  timer=setInterval(()=>{
+    const dx=mx-ox,dy=my-oy;
+    if(dx*dx+dy*dy>170){
+      ox=mx;oy=my;
+      let n=+cur.dataset.n+dir;               // 0-based
+      if(n>FRAMES-1){n=FRAMES-2;dir=-1}
+      if(n<0){n=1;dir=1}
+      cur.dataset.n=n;cur.src=frameSets[+cur.dataset.set][n];
+    }
+  },30);
+}
+function stopFlip(){stopT=setTimeout(()=>clearInterval(timer),400)}
+
+/* ---------- background scribble (original, procedural) ---------- */
+(function(){
+  const g=document.getElementById('bg').getContext('2d');g.strokeStyle='rgba(0,0,0,.28)';g.lineWidth=.7;
+  for(let k=0;k<5;k++){
+    g.beginPath();
+    for(let a=0;a<Math.PI*14;a+=.04){
+      const rr=60+30*Math.sin(a*.37+k)+10*Math.sin(a*1.9+k*2);
+      const x=110+Math.cos(a+k*.4)*rr*1.6+(a*2.2-70), y=105+Math.sin(a*1.03+k*.4)*rr*.9;
+      a?g.lineTo(x,y):g.moveTo(x,y);
+    }
+    g.stroke();
+  }
+})();
+</script>
+</body>
+</html>

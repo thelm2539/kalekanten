@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1180">
+<title>Scrapbook / weather calendar</title>
+<style>
+body{margin:0;background:#fff;color:#353535;font:10px/16px Verdana,sans-serif;position:relative;min-height:900px}
+#bg{position:absolute;left:0;top:0;pointer-events:none}
+#wrap{position:absolute;left:104px;width:960px;user-select:none;-webkit-user-select:none}
+#logo{position:absolute;left:0;top:0;width:320px;height:62px;font:italic 30px/62px "Courier New",monospace;letter-spacing:-1px;color:#222}
+#nav,#monthbar,#dow{position:absolute;left:0;white-space:nowrap;font-weight:700;display:flex;gap:4px}
+#nav{top:75px}
+#monthbar{top:112px}
+#monthbar .title{min-width:120px;text-align:center}
+#dow{top:150px;width:960px;gap:0}
+#dow span{position:absolute;width:128px;font-weight:700}
+a{color:#000;text-decoration:none;font-weight:700;cursor:pointer}
+a:hover{text-decoration:underline}
+#nav a.current{text-decoration:underline}
+.cell{position:absolute;width:128px;height:128px}
+.cell img{display:block;width:128px;height:128px;-webkit-user-drag:none}
+.txt{position:absolute;inset:0;padding:40px 0 0 18px;font:11px/15px Verdana,sans-serif;color:#111;text-shadow:0 0 3px #fff,0 0 3px #fff;pointer-events:none}
+.txt b{font-size:14px;display:block;line-height:18px}
+.cell.today .txt b{color:#aa002c}
+.cell.today::after{content:"";position:absolute;left:18px;top:60px;width:20px;border-top:2px solid #aa002c}
+.cell.nodata img{opacity:.35}
+#tip{position:fixed;display:none;background:#fff;border:1px solid #ccc;padding:4px 7px;font:9px/13px Verdana;pointer-events:none;z-index:9}
+#legend{position:absolute;left:0;font:9px/14px Verdana;color:#666;width:720px}
+.loc{margin-left:14px}.loc a{margin-left:4px;color:#888}.loc a.on{color:#000;text-decoration:underline}
+#status{color:#aa002c;font-style:italic}
+</style>
+</head>
+<body>
+<canvas id="bg" width="260" height="240"></canvas>
+<div id="wrap">
+  <div id="logo">scrapbook</div>
+  <div id="nav"><a href="index.html">projects</a><span> · </span><a class="current">weather calendar</a></div>
+  <div id="monthbar"><a id="prev">« prev</a><span class="title" id="title"></span><a id="next">next »</a><span class="loc" id="loc"></span><span id="status"></span></div>
+  <div id="dow"></div>
+  <div id="grid"></div>
+  <div id="legend"></div>
+</div>
+<div id="tip"></div>
+
+<script>
+const TOP=175, PITCH=140, CELL=128, S=CELL/96, FRAMES=8;
+const LOCS={sg:{name:"Singapore",lat:1.3521,lon:103.8198,tz:"Asia/Singapore",tmin:27,tmax:34},
+  nar:{name:"Narrawallee, NSW",lat:-35.30,lon:150.47,tz:"Australia/Sydney",tmin:10,tmax:30}};
+let loc='sg';try{loc=localStorage.getItem("loc")||"sg"}catch(e){}if(!LOCS[loc])loc="sg";
+const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DOW=['mon','tue','wed','thu','fri','sat','sun'];
+document.getElementById('dow').innerHTML=DOW.map((d,i)=>`<span style="left:${i*PITCH+18}px">${d}</span>`).join('');
+
+/* ---------- weather → paper ----------
+   crumple frame (0 flat … 7 tight ball) says how wet/stormy the day was; paper tint says how hot. */
+const WMO={0:'clear',1:'mostly clear',2:'partly cloudy',3:'overcast',45:'fog',48:'fog',51:'light drizzle',53:'drizzle',55:'heavy drizzle',
+  61:'light rain',63:'rain',65:'heavy rain',80:'showers',81:'heavy showers',82:'violent showers',95:'thunderstorm',96:'thunderstorm + hail',99:'thunderstorm + hail'};
+function frameFor(code,rain){
+  if(code>=95) return 7;
+  if(rain>=40) return 6;
+  if(rain>=15) return 5;
+  if(rain>=4)  return 4;
+  if(rain>=0.5||(code>=51&&code<=82)) return 3;
+  if(code>=2) return 1;           // cloud, no rain
+  return 0;                        // clear = flat sheet
+}
+function tintFor(tmax){const{tmin,tmax:hi}=LOCS[loc];return Math.max(0,Math.min(7,Math.round((tmax-tmin)/(hi-tmin)*7)))}
+
+/* ---------- procedural crumpled paper (tint-aware) ---------- */
+const lerp=(a,b,t)=>a+(b-a)*t;
+function rng(seed){return()=>((seed=(seed*1664525+1013904223)>>>0)/4294967296)}
+const cache={};
+function frame(k,seed,tintIdx){
+  const key=k+'|'+seed+'|'+tintIdx;if(cache[key])return cache[key];
+  const s=(tintIdx/7)*2-1;                       // -1 cool … +1 hot
+  const tr=1+.07*s+(s>0?.04*s:0), tg=1+.01*s-.03*Math.abs(s), tb=1-.14*s;
+  const c=document.createElement('canvas');c.width=c.height=CELL;const g=c.getContext('2d');g.scale(S,S);
+  const t=k/(FRAMES-1), r=rng(seed*97+k*13+1);
+  const N=7,cx=46,cy=44,w=lerp(64,28,t),h=lerp(46,28,t);
+  const col=(v)=>`rgb(${Math.min(255,v*tr|0)},${Math.min(255,v*tg|0)},${Math.min(255,v*tb|0)})`;
+  g.shadowColor='rgba(0,0,0,.35)';g.shadowBlur=6*S;g.shadowOffsetX=4*S;g.shadowOffsetY=6*S;
+  const pts=[];
+  for(let j=0;j<=N;j++){pts[j]=[];for(let i=0;i<=N;i++){
+    const edge=i==0||j==0||i==N||j==N,jit=t*9*(edge?.7:1);
+    pts[j][i]=[cx+(i/N-.5)*w+(r()-.5)*jit*2,cy+(j/N-.5)*h+(r()-.5)*jit*2]}}
+  const clip=new Path2D();clip.moveTo(...pts[0][0]);
+  for(let i=1;i<=N;i++)clip.lineTo(...pts[0][i]);for(let j=1;j<=N;j++)clip.lineTo(...pts[j][N]);
+  for(let i=N-1;i>=0;i--)clip.lineTo(...pts[N][i]);for(let j=N-1;j>=0;j--)clip.lineTo(...pts[j][0]);clip.closePath();
+  g.fillStyle=col(232);g.fill(clip);g.shadowColor='transparent';g.save();g.clip(clip);
+  const tri=(a,b,d)=>{const sh=.8+(r()-.5)*(.12+t*1.0);const v=Math.max(35,Math.min(250,235*sh));
+    g.fillStyle=g.strokeStyle=col(v);g.lineWidth=.6;g.beginPath();g.moveTo(...a);g.lineTo(...b);g.lineTo(...d);g.closePath();g.fill();g.stroke()};
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const a=pts[j][i],b=pts[j][i+1],d=pts[j+1][i],e=pts[j+1][i+1];tri(a,b,d);tri(b,e,d)}
+  g.restore();g.strokeStyle='rgba(0,0,0,.25)';g.lineWidth=.8;g.stroke(clip);
+  return cache[key]=c.toDataURL();
+}
+
+/* ---------- data ---------- */
+const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const dayMs=864e5, today=new Date(); today.setHours(0,0,0,0);
+const daily='weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum';
+const dataCache={};
+async function getJSON(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json()}
+async function loadMonth(y,m){
+  const L=LOCS[loc],key=loc+y+'-'+m;if(dataCache[key])return dataCache[key];
+  const first=new Date(y,m,1),last=new Date(y,m+1,0),out={};
+  const cutoff=new Date(today-5*dayMs);                 // archive lags ~5 days; forecast API covers the rest
+  const maxF=new Date(+today+15*dayMs);
+  const jobs=[];
+  const base=`&latitude=${L.lat}&longitude=${L.lon}&timezone=${L.tz}&daily=${daily}`;
+  if(first<=cutoff) jobs.push(getJSON(`https://archive-api.open-meteo.com/v1/archive?start_date=${iso(first)}&end_date=${iso(last<cutoff?last:cutoff)}${base}`));
+  const fs=first>cutoff?first:new Date(+cutoff+dayMs), fe=last<maxF?last:maxF;
+  if(fs<=fe) jobs.push(getJSON(`https://api.open-meteo.com/v1/forecast?start_date=${iso(fs)}&end_date=${iso(fe)}${base}`));
+  for(const j of await Promise.all(jobs)){const d=j.daily;
+    d.time.forEach((t,i)=>{if(d.temperature_2m_max[i]!=null)out[t]={code:d.weather_code[i],hi:d.temperature_2m_max[i],lo:d.temperature_2m_min[i],rain:d.precipitation_sum[i]||0}})}
+  return dataCache[key]=out;
+}
+
+/* ---------- render ---------- */
+let vy=today.getFullYear(),vm=today.getMonth(),token=0;
+const grid=document.getElementById('grid'),tip=document.getElementById('tip'),status=document.getElementById('status');
+async function render(){
+  const my=++token;
+  document.getElementById('title').textContent=`${MONTHS[vm]} ${vy}`;drawLoc();
+  status.textContent='loading…';grid.innerHTML='';
+  let data={};try{data=await loadMonth(vy,vm);status.textContent=''}catch(e){status.textContent='weather unavailable ('+e.message+')'}
+  if(my!==token)return;
+  const first=new Date(vy,vm,1),lead=(first.getDay()+6)%7,days=new Date(vy,vm+1,0).getDate();
+  const rows=Math.ceil((lead+days)/7);
+  for(let d=1;d<=days;d++){
+    const slot=lead+d-1,row=slot/7|0,col=slot%7,k=iso(new Date(vy,vm,d)),w=data[k];
+    const cell=document.createElement('div');cell.className='cell';
+    cell.style.left=col*PITCH+'px';cell.style.top=(TOP+row*PITCH)+'px';
+    if(k===iso(today))cell.classList.add('today');
+    const img=document.createElement('img');img.alt='';img.draggable=false;
+    const base=w?frameFor(w.code,w.rain):0,tint=w?tintFor(w.hi):3,seed=d%8+1;
+    img.dataset.base=base;img.dataset.n=base;img.dataset.seed=seed;img.dataset.tint=tint;
+    img.src=frame(base,seed,tint);
+    if(!w)cell.classList.add('nodata');
+    const txt=document.createElement('div');txt.className='txt';
+    txt.innerHTML=`<b>${d}</b>`+(w?`${Math.round(w.hi)}° / ${Math.round(w.lo)}°<br>${w.rain.toFixed(1)} mm`:'–');
+    cell.append(img,txt);
+    cell.addEventListener('mouseenter',()=>{startFlip(img);
+      tip.innerHTML=w?`<b>${d} ${MONTHS[vm]}</b><br>${WMO[w.code]||'code '+w.code}<br>high ${w.hi}°C · low ${w.lo}°C<br>rain ${w.rain.toFixed(1)} mm`:`<b>${d} ${MONTHS[vm]}</b><br>no data yet`;tip.style.display='block'});
+    cell.addEventListener('mousemove',e=>{mx=e.pageX;my2=e.pageY;tip.style.left=e.clientX+14+'px';tip.style.top=e.clientY+14+'px'});
+    cell.addEventListener('mouseleave',()=>{stopFlip(img);tip.style.display='none'});
+    grid.appendChild(cell);
+  }
+  const lg=document.getElementById('legend');lg.style.top=(TOP+rows*PITCH+8)+'px';
+  const L=LOCS[loc];lg.innerHTML=`${L.name} · paper: flat = clear · light crumple = cloud / drizzle · tighter = rain · ball = thunderstorm. &nbsp;tint: cool grey ≤${L.tmin}° → warm ≥${L.tmax}° daily high. data: open-meteo.com`;lg.style.width='900px';
+  document.body.style.minHeight=(TOP+rows*PITCH+60)+'px';
+}
+function drawLoc(){const el=document.getElementById('loc');
+  el.innerHTML=Object.entries(LOCS).map(([k,v])=>`<a data-k="${k}" class="${k===loc?'on':''}">${v.name}</a>`).join(' | ');
+  el.querySelectorAll('a').forEach(a=>a.onclick=()=>{loc=a.dataset.k;try{localStorage.setItem('loc',loc)}catch(e){}cache_clear();render()})}
+function cache_clear(){}
+document.getElementById('prev').onclick=()=>{if(--vm<0){vm=11;vy--}render()};
+document.getElementById('next').onclick=()=>{if(++vm>11){vm=0;vy++}render()};
+
+/* ---------- hover flip (same rules as the original), settles back to the weather frame ---------- */
+let mx=0,my2=0,ox=0,oy=0,dir=1,timer=null,stopT=null,cur=null;
+function startFlip(img){clearTimeout(stopT);clearInterval(timer);cur=img;
+  timer=setInterval(()=>{const dx=mx-ox,dy=my2-oy;
+    if(dx*dx+dy*dy>170){ox=mx;oy=my2;let n=+cur.dataset.n+dir;
+      if(n>FRAMES-1){n=FRAMES-2;dir=-1}if(n<0){n=1;dir=1}
+      cur.dataset.n=n;cur.src=frame(n,+cur.dataset.seed,+cur.dataset.tint)}},30)}
+function stopFlip(img){stopT=setTimeout(()=>{clearInterval(timer);
+  img.dataset.n=img.dataset.base;img.src=frame(+img.dataset.base,+img.dataset.seed,+img.dataset.tint)},400)}
+
+/* ---------- background scribble ---------- */
+(function(){const g=document.getElementById('bg').getContext('2d');g.strokeStyle='rgba(0,0,0,.28)';g.lineWidth=.7;
+  for(let k=0;k<5;k++){g.beginPath();for(let a=0;a<Math.PI*14;a+=.04){
+    const rr=60+30*Math.sin(a*.37+k)+10*Math.sin(a*1.9+k*2),x=110+Math.cos(a+k*.4)*rr*1.6+(a*2.2-70),y=105+Math.sin(a*1.03+k*.4)*rr*.9;
+    a?g.lineTo(x,y):g.moveTo(x,y)}g.stroke()}})();
+render();
+</script>
+</body>
+</html>

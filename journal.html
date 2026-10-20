@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1180">
+<title>Scrapbook / journal</title>
+<style>
+body{margin:0;background:#fff;color:#353535;font:10px/16px Verdana,sans-serif;position:relative;min-height:900px}
+#bg{position:absolute;left:0;top:0;pointer-events:none}
+#wrap{position:absolute;left:104px;width:960px}
+#logo{position:absolute;left:0;top:0;width:320px;height:62px;font:italic 30px/62px "Courier New",monospace;letter-spacing:-1px;color:#222}
+.bar{position:absolute;left:0;white-space:nowrap;font-weight:700;display:flex;gap:4px;align-items:baseline}
+#nav{top:75px}
+#ctl{top:112px;gap:10px}
+#ctl .title{min-width:110px;text-align:center;font-weight:700}
+#ctl .sep{color:#bbb}
+a{color:#000;text-decoration:none;font-weight:700;cursor:pointer}
+a:hover{text-decoration:underline}
+a.on{text-decoration:underline}
+a.dim{color:#999}
+#view{position:absolute;top:150px;left:0;width:960px;user-select:none;-webkit-user-select:none}
+.dow{position:absolute;top:0;width:128px;font-weight:700}
+.cell{position:absolute;width:128px;height:128px;cursor:pointer}
+.cell img{display:block;width:128px;height:128px;-webkit-user-drag:none}
+.txt{position:absolute;inset:0;padding:40px 0 0 18px;font:11px/15px Verdana,sans-serif;color:#111;text-shadow:0 0 3px #fff,0 0 3px #fff;pointer-events:none}
+.txt b{font-size:14px;display:block;line-height:18px}
+.txt i{color:#333}
+.cell.today .txt b{color:#aa002c}
+.cell.today::after{content:"";position:absolute;left:18px;top:60px;width:20px;border-top:2px solid #aa002c}
+.mt{position:absolute;font-weight:700}
+.dot{position:absolute;border-radius:2px;cursor:pointer;background:#ecebe6}
+.dot.has{box-shadow:1px 2px 2px rgba(0,0,0,.28)}
+.dot.today{outline:1.5px solid #aa002c;outline-offset:1px}
+.dot:hover{outline:1.5px solid #000;outline-offset:1px}
+.yl{position:absolute;font-weight:700}
+.tick{position:absolute;font-size:8px;color:#888}
+#legend{position:absolute;left:0;font:9px/16px Verdana;color:#666;width:900px}
+#legend .chip{display:inline-block;margin-right:12px;white-space:nowrap}
+#legend .sw,.sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px;box-shadow:1px 1px 1px rgba(0,0,0,.25)}
+#tip{position:fixed;display:none;background:#fff;border:1px solid #ccc;padding:5px 8px;font:9px/13px Verdana;pointer-events:none;z-index:30;max-width:240px}
+#status{color:#aa002c;font-style:italic;font-weight:400}
+
+/* drawer */
+#veil{position:fixed;inset:0;background:rgba(255,255,255,.55);display:none;z-index:20}
+#drawer{position:fixed;top:0;right:0;bottom:0;width:420px;background:#fff;box-shadow:-6px 0 18px rgba(0,0,0,.18);z-index:25;padding:26px 28px;box-sizing:border-box;display:none;overflow:auto;transition:background .4s}
+#drawer h2{font:italic 20px/24px "Courier New",monospace;margin:0 0 2px;letter-spacing:-1px;color:#111}
+#drawer .sub{color:#777;margin-bottom:12px}
+#drawer .hd{display:flex;justify-content:space-between;align-items:baseline}
+#txt{width:100%;height:220px;box-sizing:border-box;border:1px solid #ccc;background:rgba(255,255,255,.8);font:11px/17px Verdana,sans-serif;color:#222;padding:10px;resize:vertical;outline:none}
+#txt:focus{border-color:#000}
+#tone{margin:14px 0 4px;font-weight:700}
+#pal{display:flex;gap:0;height:38px;margin:6px 0 10px;box-shadow:2px 3px 4px rgba(0,0,0,.25)}
+#pal div{flex:1}
+#pal div:first-child{flex:2}
+#bars .row{display:flex;align-items:center;height:14px}
+#bars .nm{width:60px;color:#555}
+#bars .bar2{height:6px;border-radius:2px}
+#chips{margin-top:12px;line-height:22px}
+#chips a{display:inline-block;border:1px solid #ccc;padding:0 7px;margin:0 4px 4px 0;font-weight:400;color:#444;border-radius:2px}
+#chips a.on{border-color:#000;color:#000;font-weight:700;text-decoration:none}
+#foot{margin-top:14px;display:flex;justify-content:space-between;color:#777}
+</style>
+</head>
+<body>
+<canvas id="bg" width="260" height="240"></canvas>
+<div id="wrap">
+  <div id="logo">scrapbook</div>
+  <div id="nav" class="bar"><a href="index.html">projects</a><span> · </span><a href="calendar.html">weather calendar</a><span> · </span><a class="on">journal</a></div>
+  <div id="ctl" class="bar"></div>
+  <div id="view"></div>
+</div>
+<div id="tip"></div>
+<div id="veil"></div>
+<div id="drawer">
+  <div class="hd"><h2 id="dh"></h2><span><a id="dprev">‹</a> &nbsp; <a id="dnext">›</a> &nbsp; <a id="dclose">× close</a></span></div>
+  <div class="sub" id="dsub"></div>
+  <textarea id="txt" placeholder="how was today?"></textarea>
+  <div id="tone"></div>
+  <div id="pal"></div>
+  <div id="bars"></div>
+  <div id="chips"></div>
+  <div id="foot"><span id="wc"></span><span><span id="saved"></span> &nbsp; <a id="del" class="dim">delete entry</a></span></div>
+</div>
+<input type="file" id="imp" accept="application/json" style="display:none">
+
+<script>
+/* =====================================================================
+   TONE ENGINE — runs entirely in the browser; nothing is sent anywhere.
+   text → emotion shares → blended colour (+ intensity → how saturated / crumpled)
+   ===================================================================== */
+const EMO={
+  joy:    {c:[244,190,52],  w:'happy joy* great wonderful fun laugh* excit* amazing delight* celebrat* won win proud fantastic best smil* party awesome thrilled cheer* yay brilliant good lovely',ph:['so good','best day']},
+  calm:   {c:[104,182,182], w:'calm peace* relax* quiet still gentle slow rest* breath* serene cozy cosy tranquil sunset walk garden tea content* easy soft beach swim ocean',ph:['slow morning']},
+  love:   {c:[226,98,138],  w:'love* lover adore* cuddl* kiss* hug* tender affection* together grateful thank* appreciat* family friend* wedding baby',ph:['miss you','so thankful']},
+  energy: {c:[236,104,56],  w:'energ* run ran gym workout train* hike hiking surf* adventure busy productive motivat* launched finished built shipped active dance climbed cycled',ph:['got so much done']},
+  sad:    {c:[84,112,170],  w:'sad cry* cried tear* lonely alone grief griev* miss hurt* down depress* empty lost heartbr* sorry regret mourn* bad upset gloom* low',ph:['feel flat','miss them']},
+  anxious:{c:[150,128,196], w:'anxi* worr* nervous stress* afraid fear* panic overwhelm* uneasy dread tense deadline* rush* insomnia restless doubt',ph:["can't sleep",'on edge']},
+  angry:  {c:[178,48,48],   w:'angry anger furious mad annoy* irritat* hate* rage frustrat* fight argu* unfair resent*',ph:['sick of','fed up']},
+  tired:  {c:[150,150,128], w:'tired exhaust* sleepy bored boring drained lazy sluggish meh fatigue* burnt burnout sick ill',ph:['slept in','no energy']},
+  neutral:{c:[200,194,180], w:'',ph:[]}
+};
+const ORDER=['joy','calm','love','energy','sad','anxious','angry','tired','neutral'];
+const OPP={joy:'sad',calm:'anxious',love:'sad',energy:'tired',sad:'calm',anxious:'calm',angry:'calm',tired:'energy'};
+const EMOJI={'😊':'joy','😄':'joy','😁':'joy','🎉':'joy','😌':'calm','🌿':'calm','❤':'love','😍':'love','🥰':'love','😢':'sad','😭':'sad','😔':'sad','😰':'anxious','😬':'anxious','😡':'angry','😠':'angry','😴':'tired','🥱':'tired','💪':'energy','🔥':'energy'};
+const NEG=new Set(['not','no','never','hardly','without',"don't","didn't","wasn't","isn't","can't","won't","couldn't","aren't","cannot","dont","didnt","wasnt","isnt","cant"]);
+for(const k of ORDER){const ws=EMO[k].w.split(' ').filter(Boolean);EMO[k].ex=new Set(ws.filter(w=>!w.endsWith('*')));EMO[k].pre=ws.filter(w=>w.endsWith('*')).map(w=>w.slice(0,-1))}
+const PAPER=[224,221,213];
+const mix=(a,b,t)=>a.map((v,i)=>Math.round(v+(b[i]-v)*t));
+const hex=c=>'#'+c.map(v=>Math.max(0,Math.min(255,v)).toString(16).padStart(2,'0')).join('');
+
+const memo=new Map();
+function analyze(entry){
+  if(!entry||!entry.text||!entry.text.trim())return null;
+  const mk=(entry.emo||'')+'|'+entry.text;if(memo.has(mk))return memo.get(mk);
+  const text=entry.text.toLowerCase(), toks=text.replace(/[^a-z0-9'\s]/g,' ').split(/\s+/).filter(Boolean);
+  const sc={};ORDER.forEach(k=>sc[k]=0);let hits=0;
+  toks.forEach((t,i)=>{
+    for(const k of ORDER){if(k==='neutral')continue;const e=EMO[k];
+      if(e.ex.has(t)||e.pre.some(p=>t.startsWith(p))){
+        const neg=NEG.has(toks[i-1])||NEG.has(toks[i-2]);
+        sc[neg?OPP[k]:k]+=neg?.8:1;hits++;break}}});
+  for(const k of ORDER)for(const p of EMO[k].ph)if(text.includes(p)){sc[k]+=1;hits++}
+  for(const ch of text){const k=EMOJI[ch];if(k){sc[k]+=1.5;hits++}}
+  const ex=(text.match(/!/g)||[]).length;
+  let intensity=Math.min(1,hits*.18+ex*.05+Math.min(toks.length,80)/400);
+  let shares={};const tot=ORDER.reduce((s,k)=>s+sc[k],0);
+  if(entry.emo){shares={[entry.emo]:1};intensity=Math.max(intensity,.6)}
+  else if(tot===0){shares={neutral:1};intensity=Math.min(.3,toks.length/300)}
+  else ORDER.forEach(k=>{if(sc[k])shares[k]=sc[k]/tot});
+  const ranked=Object.entries(shares).sort((a,b)=>b[1]-a[1]);
+  const wts=ranked.map(([k,s])=>[k,Math.pow(s,1.6)]);const ws=wts.reduce((s,[,w])=>s+w,0);
+  let base=[0,0,0];wts.forEach(([k,w])=>EMO[k].c.forEach((v,i)=>base[i]+=v*w/ws));base=base.map(Math.round);
+  const color=mix(PAPER,base,.4+.6*intensity);
+  const out={shares,ranked,top:ranked[0][0],intensity,color,base,words:toks.length,
+    palette:[color,mix(color,[30,30,40],.35),mix(color,[255,255,255],.6)]};
+  memo.set(mk,out);return out;
+}
+
+/* =====================================================================
+   STORAGE
+   ===================================================================== */
+let J={},canSave=true;
+try{J=JSON.parse(localStorage.getItem('journal.v1')||'{}')}catch(e){J={}}
+let saveT=null;
+function persist(){clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setItem('journal.v1',JSON.stringify(J));canSave=true}catch(e){canSave=false}
+  const s=document.getElementById('saved');s.textContent=canSave?'saved':'could not save (storage blocked) – use export';},350)}
+
+/* =====================================================================
+   PAPER (month view) — same crumpled-sheet renderer as the weather calendar,
+   coloured by the day's palette, crumple = emotional intensity
+   ===================================================================== */
+const CELL=128,S=CELL/96,FRAMES=8;
+const lerp=(a,b,t)=>a+(b-a)*t;
+function rng(seed){return()=>((seed=(seed*1664525+1013904223)>>>0)/4294967296)}
+const fcache={};
+function frame(k,seed,rgb){
+  const key=k+'|'+seed+'|'+rgb;if(fcache[key])return fcache[key];
+  const c=document.createElement('canvas');c.width=c.height=CELL;const g=c.getContext('2d');g.scale(S,S);
+  const t=k/(FRAMES-1),r=rng(seed*97+k*13+1),N=7,cx=46,cy=44,w=lerp(64,28,t),h=lerp(46,28,t);
+  const col=v=>`rgb(${Math.min(255,rgb[0]*v/232|0)},${Math.min(255,rgb[1]*v/232|0)},${Math.min(255,rgb[2]*v/232|0)})`;
+  g.shadowColor='rgba(0,0,0,.35)';g.shadowBlur=6*S;g.shadowOffsetX=4*S;g.shadowOffsetY=6*S;
+  const pts=[];for(let j=0;j<=N;j++){pts[j]=[];for(let i=0;i<=N;i++){const e=i==0||j==0||i==N||j==N,jit=t*9*(e?.7:1);
+    pts[j][i]=[cx+(i/N-.5)*w+(r()-.5)*jit*2,cy+(j/N-.5)*h+(r()-.5)*jit*2]}}
+  const clip=new Path2D();clip.moveTo(...pts[0][0]);
+  for(let i=1;i<=N;i++)clip.lineTo(...pts[0][i]);for(let j=1;j<=N;j++)clip.lineTo(...pts[j][N]);
+  for(let i=N-1;i>=0;i--)clip.lineTo(...pts[N][i]);for(let j=N-1;j>=0;j--)clip.lineTo(...pts[j][0]);clip.closePath();
+  g.fillStyle=col(232);g.fill(clip);g.shadowColor='transparent';g.save();g.clip(clip);
+  const tri=(a,b,d)=>{const sh=.8+(r()-.5)*(.12+t*1.0),v=Math.max(35,Math.min(250,235*sh));
+    g.fillStyle=g.strokeStyle=col(v);g.lineWidth=.6;g.beginPath();g.moveTo(...a);g.lineTo(...b);g.lineTo(...d);g.closePath();g.fill();g.stroke()};
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const a=pts[j][i],b=pts[j][i+1],d=pts[j+1][i],e=pts[j+1][i+1];tri(a,b,d);tri(b,e,d)}
+  g.restore();g.strokeStyle='rgba(0,0,0,.25)';g.lineWidth=.8;g.stroke(clip);
+  return fcache[key]=c.toDataURL();
+}
+
+/* =====================================================================
+   STATE + HELPERS
+   ===================================================================== */
+const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MS=MONTHS.map(m=>m.slice(0,3).toLowerCase());
+const pad=n=>String(n).padStart(2,'0'),keyOf=(y,m,d)=>`${y}-${pad(m+1)}-${pad(d)}`;
+const now=new Date(),TY=now.getFullYear(),TM=now.getMonth(),TD=now.getDate(),TKEY=keyOf(TY,TM,TD);
+const parseKey=k=>{const[y,m,d]=k.split('-').map(Number);return{y,m:m-1,d}};
+const dim=(y,m)=>new Date(y,m+1,0).getDate();
+const monFirst=(y,m,d)=>(new Date(y,m,d).getDay()+6)%7;
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let view='month',vy=TY,vm=TM,span=5,endY=TY;
+try{view=localStorage.getItem('jview')||'month'}catch(e){}
+const V=document.getElementById('view'),tip=document.getElementById('tip');
+
+function firstYear(){let m=TY;for(const k in J){const y=+k.slice(0,4);if(y<m)m=y}return m}
+
+/* ---------- controls ---------- */
+function drawCtl(){
+  const c=document.getElementById('ctl');
+  const views=['month','year','years'].map(v=>`<a data-v="${v}" class="${v===view?'on':''}">${v}</a>`).join('<span class="sep">|</span>');
+  let nav='';
+  if(view==='month')nav=`<a id="p">« prev</a><span class="title">${MONTHS[vm]} ${vy}</span><a id="n">next »</a>`;
+  else if(view==='year')nav=`<a id="p">« prev</a><span class="title">${vy}</span><a id="n">next »</a>`;
+  else{const lab=span===0?'all years':`${endY-span+1}–${endY}`;
+    nav=`<a id="p">« earlier</a><span class="title">${lab}</span><a id="n">later »</a><span class="sep">·</span>`+
+      [3,5,10,0].map(s=>`<a data-s="${s}" class="${s===span?'on':''}">${s||'all'}</a>`).join(' ')}
+  c.innerHTML=views+'<span class="sep">·</span>'+nav+'<span class="sep">·</span><a data-go="today">today</a><span id="status"></span>';
+  c.querySelectorAll('[data-v]').forEach(a=>a.onclick=()=>{view=a.dataset.v;try{localStorage.setItem('jview',view)}catch(e){}render()});
+  c.querySelectorAll('[data-s]').forEach(a=>a.onclick=()=>{span=+a.dataset.s;render()});
+  c.querySelector('[data-go]').onclick=()=>{vy=TY;vm=TM;endY=TY;render()};
+  const p=c.querySelector('#p'),n=c.querySelector('#n');
+  p.onclick=()=>step(-1);n.onclick=()=>step(1);
+}
+function step(d){
+  if(view==='month'){vm+=d;if(vm<0){vm=11;vy--}if(vm>11){vm=0;vy++}}
+  else if(view==='year')vy+=d;
+  else endY+=d*(span||5);
+  render();
+}
+
+/* ---------- tooltip ---------- */
+function tipFor(k){const e=J[k],a=analyze(e),p=parseKey(k);
+  const head=`<b>${p.d} ${MONTHS[p.m]} ${p.y}</b>`;
+  if(!a)return head+'<br>no entry';
+  const sh=a.ranked.slice(0,3).map(([e2,s])=>`${e2} ${Math.round(s*100)}%`).join(' · ');
+  const snip=esc(e.text.trim().slice(0,90))+(e.text.length>90?'…':'');
+  return `${head}<br><span class="sw" style="background:${hex(a.color)}"></span>${sh}<br><i>${snip}</i>`}
+function showTip(k,ev){tip.innerHTML=tipFor(k);tip.style.display='block';moveTip(ev)}
+function moveTip(ev){tip.style.left=Math.min(ev.clientX+14,innerWidth-260)+'px';tip.style.top=ev.clientY+14+'px'}
+function hideTip(){tip.style.display='none'}
+
+/* ---------- render ---------- */
+function render(){
+  stopFlipNow();hideTip();drawCtl();V.innerHTML='';
+  let h=0;
+  if(view==='month')h=renderMonth();else if(view==='year')h=renderYear();else h=renderYears();
+  legend(h);document.body.style.minHeight=(150+h+90)+'px';
+}
+
+/* month: paper notes */
+const PITCH=140;
+function renderMonth(){
+  const DOW=['mon','tue','wed','thu','fri','sat','sun'];
+  V.insertAdjacentHTML('beforeend',DOW.map((d,i)=>`<span class="dow" style="left:${i*PITCH+18}px">${d}</span>`).join(''));
+  const lead=monFirst(vy,vm,1),n=dim(vy,vm),rows=Math.ceil((lead+n)/7);
+  for(let d=1;d<=n;d++){
+    const slot=lead+d-1,k=keyOf(vy,vm,d),e=J[k],a=analyze(e);
+    const cell=document.createElement('div');cell.className='cell'+(k===TKEY?' today':'');
+    cell.style.left=(slot%7)*PITCH+'px';cell.style.top=(25+(slot/7|0)*PITCH)+'px';
+    const img=document.createElement('img');img.alt='';img.draggable=false;
+    const base=a?Math.round(a.intensity*(FRAMES-1)):0,rgb=a?a.color:[228,226,220],seed=d%8+1;
+    img.dataset.base=base;img.dataset.n=base;img.dataset.seed=seed;img.dataset.rgb=rgb;img.src=frame(base,seed,rgb);
+    const txt=document.createElement('div');txt.className='txt';
+    txt.innerHTML=`<b>${d}</b>`+(a?`<i>${a.top}</i><br>${a.words}w`:'');
+    cell.append(img,txt);
+    cell.onclick=()=>openDay(k);
+    cell.onmouseenter=ev=>{startFlip(img);showTip(k,ev)};
+    cell.onmousemove=ev=>{mx=ev.pageX;my=ev.pageY;moveTip(ev)};
+    cell.onmouseleave=()=>{stopFlip(img);hideTip()};
+    V.appendChild(cell);
+  }
+  return 25+rows*PITCH;
+}
+
+/* year: 12 mini-calendars */
+function renderYear(){
+  const CS=18,GAP=3,P=CS+GAP;let frag='';
+  for(let m=0;m<12;m++){
+    const bx=(m%4)*232,by=(m/4|0)*160+8,lead=monFirst(vy,m,1);
+    frag+=`<div class="mt" style="left:${bx}px;top:${by}px">${MS[m]}</div>`;
+    for(let d=1;d<=dim(vy,m);d++){const s=lead+d-1,k=keyOf(vy,m,d),a=analyze(J[k]);
+      frag+=`<div class="dot${a?' has':''}${k===TKEY?' today':''}" data-k="${k}" style="left:${bx+(s%7)*P}px;top:${by+20+(s/7|0)*P}px;width:${CS}px;height:${CS}px;${a?'background:'+hex(a.color):''}"></div>`}
+  }
+  V.insertAdjacentHTML('beforeend',frag);bindDots();return 3*160+30;
+}
+
+/* years: one GitHub-style strip per year, stacked */
+function renderYears(){
+  const first=span===0?firstYear():endY-span+1,last=endY,CS=12,P=14,H=7*P+46;let frag='',i=0;
+  for(let y=first;y<=last;y++,i++){
+    const top=i*H,j1=monFirst(y,0,1);
+    frag+=`<div class="yl" style="left:0;top:${top+22}px">${y}</div>`;
+    for(let m=0;m<12;m++){const idx=j1+Math.round((new Date(y,m,1)-new Date(y,0,1))/864e5);
+      frag+=`<div class="tick" style="left:${50+(idx/7|0)*P}px;top:${top+4}px">${MS[m]}</div>`}
+    let idx=j1;
+    for(let m=0;m<12;m++)for(let d=1;d<=dim(y,m);d++,idx++){const k=keyOf(y,m,d),a=analyze(J[k]);
+      frag+=`<div class="dot${a?' has':''}${k===TKEY?' today':''}" data-k="${k}" style="left:${50+(idx/7|0)*P}px;top:${top+18+(idx%7)*P}px;width:${CS}px;height:${CS}px;${a?'background:'+hex(a.color):''}"></div>`}
+  }
+  V.insertAdjacentHTML('beforeend',frag);bindDots();return (last-first+1)*H+10;
+}
+function bindDots(){
+  V.onclick=e=>{const k=e.target.dataset&&e.target.dataset.k;if(k)openDay(k)};
+  V.onmouseover=e=>{const k=e.target.dataset&&e.target.dataset.k;if(k)showTip(k,e)};
+  V.onmousemove=e=>{if(tip.style.display==='block')moveTip(e)};
+  V.onmouseout=hideTip;
+}
+
+/* legend: palette tally for what's on screen + data tools */
+function visibleKeys(){
+  const out=[];
+  if(view==='month')for(let d=1;d<=dim(vy,vm);d++)out.push(keyOf(vy,vm,d));
+  else{const a=view==='year'?vy:(span===0?firstYear():endY-span+1),b=view==='year'?vy:endY;
+    for(const k in J){const y=+k.slice(0,4);if(y>=a&&y<=b)out.push(k)}}
+  return out;
+}
+function legend(h){
+  const cnt={};let n=0;for(const k of visibleKeys()){const a=analyze(J[k]);if(a){cnt[a.top]=(cnt[a.top]||0)+1;n++}}
+  const chips=ORDER.filter(k=>cnt[k]).sort((a,b)=>cnt[b]-cnt[a]).map(k=>`<span class="chip"><span class="sw" style="background:${hex(EMO[k].c)}"></span>${k} ${cnt[k]}</span>`).join('');
+  const hasSample=Object.values(J).some(e=>e.sample);
+  const el=document.createElement('div');el.id='legend';el.style.top=(h+8)+'px';
+  el.innerHTML=(n?`${n} ${n===1?'entry':'entries'} in view · ${chips}`:'no entries in view yet — click any day to write one.')+'<br>'+
+    `<a data-t="exp" class="dim">export</a> · <a data-t="imp" class="dim">import</a> · `+
+    (hasSample?'<a data-t="clr" class="dim">remove sample data</a>':'<a data-t="smp" class="dim">load 4 years of sample entries</a>')+
+    ' · colour = tone of the writing (joy, calm, love, energy, sad, anxious, angry, tired) · deeper/more crumpled = stronger feeling · stored only in this browser';
+  V.appendChild(el);
+  el.querySelectorAll('[data-t]').forEach(a=>a.onclick=()=>tool(a.dataset.t));
+}
+function tool(t){
+  if(t==='exp'){const b=new Blob([JSON.stringify(J,null,1)],{type:'application/json'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='journal.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
+  if(t==='imp')document.getElementById('imp').click();
+  if(t==='smp'){loadSample();render()}
+  if(t==='clr'){for(const k in J)if(J[k].sample)delete J[k];persist();render()}
+}
+document.getElementById('imp').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();
+  r.onload=()=>{try{const o=JSON.parse(r.result);for(const k in o)if(/^\d{4}-\d\d-\d\d$/.test(k)&&o[k]&&typeof o[k].text==='string')J[k]={text:o[k].text,emo:EMO[o[k].emo]?o[k].emo:null,sample:!!o[k].sample};persist();render()}catch(err){alert('Could not read that file')}};r.readAsText(f)};
+
+/* =====================================================================
+   DRAWER
+   ===================================================================== */
+const D=document.getElementById('drawer'),veil=document.getElementById('veil'),TA=document.getElementById('txt');
+let cur=null;
+function openDay(k){
+  cur=k;const p=parseKey(k),dt=new Date(p.y,p.m,p.d);
+  document.getElementById('dh').textContent=dt.toLocaleDateString('en-GB',{weekday:'long'}).toLowerCase();
+  document.getElementById('dsub').textContent=`${p.d} ${MONTHS[p.m]} ${p.y}`;
+  TA.value=(J[k]&&J[k].text)||'';
+  D.style.display='block';veil.style.display='block';hideTip();paintTone();
+  setTimeout(()=>TA.focus(),30);
+}
+function closeDay(){D.style.display='none';veil.style.display='none';if(cur){const p=parseKey(cur);if(view==='month'){vy=p.y;vm=p.m}}cur=null;render()}
+function paintTone(){
+  const e=J[cur],a=analyze(e),tone=document.getElementById('tone'),pal=document.getElementById('pal'),bars=document.getElementById('bars'),chips=document.getElementById('chips');
+  document.getElementById('wc').textContent=a?`${a.words} words`:'';
+  if(!a){tone.textContent='write something and the day finds its colour';pal.innerHTML='<div style="background:#e8e6e0"></div>';bars.innerHTML='';D.style.background='#fff'}
+  else{
+    tone.innerHTML=`reads as <span style="text-decoration:underline">${a.top}</span>${e.emo?' (set by you)':''} · intensity ${Math.round(a.intensity*100)}%`;
+    pal.innerHTML=a.palette.map(c=>`<div style="background:${hex(c)}"></div>`).join('');
+    bars.innerHTML=a.ranked.slice(0,4).map(([k,s])=>`<div class="row"><span class="nm">${k}</span><div class="bar2" style="width:${Math.max(4,s*220)}px;background:${hex(EMO[k].c)}"></div><span style="margin-left:6px;color:#888">${Math.round(s*100)}%</span></div>`).join('');
+    D.style.background=`linear-gradient(180deg,${hex(mix(a.color,[255,255,255],.82))},#fff 55%)`;
+  }
+  chips.innerHTML='<span style="color:#777">not quite right? </span>'+`<a data-e="" class="${!(e&&e.emo)?'on':''}">auto</a>`+
+    ORDER.filter(k=>k!=='neutral').map(k=>`<a data-e="${k}" class="${e&&e.emo===k?'on':''}"><span class="sw" style="background:${hex(EMO[k].c)}"></span>${k}</a>`).join('');
+  chips.querySelectorAll('a').forEach(a=>a.onclick=()=>{if(!J[cur])J[cur]={text:TA.value};J[cur].emo=a.dataset.e||null;J[cur].sample=false;persist();paintTone()});
+}
+TA.addEventListener('input',()=>{
+  const t=TA.value;
+  if(!t.trim()){delete J[cur]}
+  else{const o=J[cur]||{};J[cur]={text:t,emo:o.emo||null}}
+  document.getElementById('saved').textContent='…';persist();paintTone();
+});
+document.getElementById('del').onclick=()=>{if(cur&&J[cur]&&confirm('Delete this entry?')){delete J[cur];TA.value='';persist();paintTone()}};
+function moveDay(n){const p=parseKey(cur),d=new Date(p.y,p.m,p.d+n);openDay(keyOf(d.getFullYear(),d.getMonth(),d.getDate()))}
+document.getElementById('dprev').onclick=()=>moveDay(-1);document.getElementById('dnext').onclick=()=>moveDay(1);
+document.getElementById('dclose').onclick=closeDay;veil.onclick=closeDay;
+addEventListener('keydown',e=>{if(e.key==='Escape'&&cur)closeDay()});
+
+/* =====================================================================
+   SAMPLE LIFE (deterministic) — so the heatmap has something to show
+   ===================================================================== */
+const POOL={
+  joy:['What a great day, we laughed all afternoon!','So happy with how the presentation went, I was proud of the team.','Celebrated with friends, wonderful dinner, amazing night.','Fun day out, finally some good news.'],
+  calm:['Quiet morning, slow tea in the garden, felt peaceful.','Walked by the ocean at sunset, calm and content.','A gentle, easy day. Rested, breathed, did very little.','Soft light, cosy evening, nowhere to be.'],
+  love:['Grateful for family today, a long hug and a lot of thanks.','Spent the day together, tender and happy, love them so much.','Thank you to my friends, I appreciate every one of them.','Dinner together, kisses and cuddles, feeling loved.'],
+  energy:['Ran before work, gym after, so much energy and got everything finished.','Long hike, busy and productive, I felt active all day.','Shipped the thing! Motivated and wired.','Surf in the morning then built the new shelf. Great energy.'],
+  sad:['Felt down all day, a bit lonely and empty.','I miss them. Cried a little, feeling low and sad.','Not a good day. Everything felt heavy and I felt lost.','Sorry for how things went, I regret it, feeling flat.'],
+  anxious:["Stressed about the deadline, nervous and can't settle.",'Worried all day, overwhelmed by everything to do, tense.','Anxious about tomorrow, restless, insomnia again.','Panic in the morning, uneasy until evening.'],
+  angry:['So frustrated today, a pointless argument and it felt unfair.','Furious about the delay, annoyed at everyone, sick of it.','Rage on the commute, irritated all day.'],
+  tired:['Exhausted, slept in, bored and drained all day.','Sick and sluggish, did nothing, meh.','Tired. Burnt out. Lazy day on the sofa.','Sleepy and flat, a boring grey day.']
+};
+function loadSample(){
+  const r=rng(20260419);let mood=0.3;const keys=['joy','calm','love','energy','sad','anxious','angry','tired'];
+  for(let y=TY-3;y<=TY;y++)for(let m=0;m<12;m++)for(let d=1;d<=dim(y,m);d++){
+    const dt=new Date(y,m,d);if(dt>now)continue;const k=keyOf(y,m,d);if(J[k])continue;
+    mood=mood*.92+(r()-.5)*.5;
+    const wk=(dt.getDay()+6)%7,season=Math.sin((dt.getMonth()-2)/12*2*Math.PI);
+    if(r()<.28)continue;                                           // skipped days
+    const w={joy:1+mood+(wk>4?1:0)+season*.3,calm:1.1+(wk>4?.9:0)-Math.abs(mood)*.2,love:.5+(wk>4?.5:0),energy:.9+(wk<5?.4:0)+season*.5,
+      sad:.45-mood*.9+(m===5?.5:0),anxious:.7+(wk===0?1:0)+(wk===3?.3:0)-mood*.3,angry:.3,tired:.8+(wk===4?.6:0)-season*.3};
+    let tot=0;keys.forEach(x=>{w[x]=Math.max(.05,w[x]);tot+=w[x]});let q=r()*tot,pick=keys[0];for(const x of keys){q-=w[x];if(q<=0){pick=x;break}}
+    const pl=POOL[pick];let t=pl[r()*pl.length|0];if(r()<.4)t+=' '+POOL[pick][r()*pl.length|0];
+    if(r()<.15)t+=' '+POOL.calm[r()*4|0];
+    J[k]={text:t,emo:null,sample:true};
+  }
+  persist();
+}
+/* hover-flip on month papers (same rules as the original site) */
+let mx=0,my=0,ox=0,oy=0,dir=1,timer=null,stopT=null,curImg=null;
+function startFlip(img){clearTimeout(stopT);clearInterval(timer);curImg=img;
+  timer=setInterval(()=>{const dx=mx-ox,dy=my-oy;if(dx*dx+dy*dy>170){ox=mx;oy=my;let n=+curImg.dataset.n+dir;
+    if(n>FRAMES-1){n=FRAMES-2;dir=-1}if(n<0){n=1;dir=1}curImg.dataset.n=n;curImg.src=frame(n,+curImg.dataset.seed,curImg.dataset.rgb)}},30)}
+function stopFlip(img){stopT=setTimeout(()=>{clearInterval(timer);if(img.isConnected){img.dataset.n=img.dataset.base;img.src=frame(+img.dataset.base,+img.dataset.seed,img.dataset.rgb)}},400)}
+function stopFlipNow(){clearTimeout(stopT);clearInterval(timer)}
+
+/* background scribble */
+(function(){const g=document.getElementById('bg').getContext('2d');g.strokeStyle='rgba(0,0,0,.28)';g.lineWidth=.7;
+  for(let k=0;k<5;k++){g.beginPath();for(let a=0;a<Math.PI*14;a+=.04){
+    const rr=60+30*Math.sin(a*.37+k)+10*Math.sin(a*1.9+k*2),x=110+Math.cos(a+k*.4)*rr*1.6+(a*2.2-70),y=105+Math.sin(a*1.03+k*.4)*rr*.9;
+    a?g.lineTo(x,y):g.moveTo(x,y)}g.stroke()}})();
+render();
+</script>
+</body>
+</html>
