@@ -48,9 +48,9 @@ const PROJECTS = [
 const ROWS = 11, COLS = 7, PITCH = 104, TOP = 175, FRAMES = 8;
 
 /* ---------- nav ---------- */
-document.getElementById('nav').innerHTML = SECTIONS.map(s =>
-  `<a href="#" class="${s==='projects'?'current':''}">${s}</a>`).join('<span style="margin-right:4px"> · </span>')
-  .replace(/<span/g,'<span').replace(/<\/a><span/g,'</a><span');
+const NAV = [['projects','index.html'],['weather calendar','calendar.html'],['journal','journal.html']];
+document.getElementById('nav').innerHTML = NAV.map(([t,h]) =>
+  `<a href="${h}" class="${h==='index.html'?'current':''}">${t}</a>`).join('<span style="margin-right:4px"> · </span>');
 // keep it on one line like the reference
 document.getElementById('nav').style.display = 'flex';
 

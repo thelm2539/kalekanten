@@ -40,6 +40,16 @@ a.dim{color:#999}
 #tip{position:fixed;display:none;background:#fff;border:1px solid #ccc;padding:5px 8px;font:9px/13px Verdana;pointer-events:none;z-index:30;max-width:240px}
 #status{color:#aa002c;font-style:italic;font-weight:400}
 
+/* auth gate */
+#auth{position:fixed;inset:0;background:#fff;z-index:50;display:none}
+#auth .box{position:absolute;left:104px;top:150px;width:300px}
+#auth .lg{font:italic 30px/40px "Courier New",monospace;letter-spacing:-1px;color:#222}
+#auth .sub{color:#777;margin:2px 0 18px}
+#auth input{display:block;width:100%;box-sizing:border-box;border:1px solid #ccc;font:11px/16px Verdana,sans-serif;padding:7px 9px;margin-bottom:8px;outline:none}
+#auth input:focus{border-color:#000}
+#auth .btns{margin-top:12px}
+#amsg{min-height:30px;color:#aa002c;font-style:italic;margin:2px 0}
+#amsg.ok{color:#2f7d4f}
 /* drawer */
 #veil{position:fixed;inset:0;background:rgba(255,255,255,.55);display:none;z-index:20}
 #drawer{position:fixed;top:0;right:0;bottom:0;width:420px;background:#fff;box-shadow:-6px 0 18px rgba(0,0,0,.18);z-index:25;padding:26px 28px;box-sizing:border-box;display:none;overflow:auto;transition:background .4s}
@@ -69,6 +79,13 @@ a.dim{color:#999}
   <div id="ctl" class="bar"></div>
   <div id="view"></div>
 </div>
+<div id="auth"><div class="box">
+  <div class="lg">scrapbook</div><div class="sub" id="asub">private journal</div>
+  <input id="em" type="email" placeholder="email" autocomplete="email">
+  <input id="pw" type="password" placeholder="password" autocomplete="current-password">
+  <div id="amsg"></div>
+  <div class="btns"><a id="go">sign in</a> · <a id="mode" class="dim">create account</a> · <a id="forgot" class="dim">forgot password</a></div>
+</div></div>
 <div id="tip"></div>
 <div id="veil"></div>
 <div id="drawer">
@@ -83,6 +100,8 @@ a.dim{color:#999}
 </div>
 <input type="file" id="imp" accept="application/json" style="display:none">
 
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
 /* =====================================================================
    TONE ENGINE — runs entirely in the browser; nothing is sent anywhere.
@@ -137,13 +156,96 @@ function analyze(entry){
 }
 
 /* =====================================================================
-   STORAGE
+   STORAGE — Supabase (Postgres + row-level security). Entries live in table
+   journal_entries; sample entries are kept in memory only and never uploaded.
    ===================================================================== */
-let J={},canSave=true;
-try{J=JSON.parse(localStorage.getItem('journal.v1')||'{}')}catch(e){J={}}
-let saveT=null;
-function persist(){clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setItem('journal.v1',JSON.stringify(J));canSave=true}catch(e){canSave=false}
-  const s=document.getElementById('saved');s.textContent=canSave?'saved':'could not save (storage blocked) – use export';},350)}
+let J={},sb=null,user=null,migrating=false,flushing=false,flushT=null;const dirty=new Set();
+function setSaved(t){const s=document.getElementById('saved');if(s)s.textContent=t}
+function markDirty(k){dirty.add(k);setSaved('…');clearTimeout(flushT);flushT=setTimeout(flush,600)}
+async function flush(){
+  if(!dirty.size||flushing||!sb||!user)return;flushing=true;
+  const ks=[...dirty];dirty.clear();setSaved('saving…');
+  const ups=ks.filter(k=>J[k]&&!J[k].sample),dels=ks.filter(k=>!(J[k]&&!J[k].sample));
+  try{
+    for(let i=0;i<ups.length;i+=500){
+      const rows=ups.slice(i,i+500).map(k=>({user_id:user.id,entry_date:k,text:J[k].text,emo:J[k].emo||null}));
+      const{error}=await sb.from('journal_entries').upsert(rows,{onConflict:'user_id,entry_date'});if(error)throw error}
+    if(dels.length){const{error}=await sb.from('journal_entries').delete().in('entry_date',dels);if(error)throw error}
+    setSaved('saved');
+    if(migrating){migrating=false;try{localStorage.removeItem('journal.v1')}catch(e){}}
+  }catch(err){ks.forEach(k=>dirty.add(k));setSaved('could not save – retrying');clearTimeout(flushT);flushT=setTimeout(flush,5000)}
+  flushing=false;if(dirty.size){clearTimeout(flushT);flushT=setTimeout(flush,600)}
+}
+addEventListener('beforeunload',e=>{if(dirty.size||flushing){e.preventDefault();e.returnValue=''}});
+async function loadAll(){
+  const out={};
+  for(let from=0;;from+=1000){
+    const{data,error}=await sb.from('journal_entries').select('entry_date,text,emo').order('entry_date').range(from,from+999);
+    if(error)throw error;data.forEach(r=>out[r.entry_date]={text:r.text,emo:r.emo});if(data.length<1000)break}
+  J=out;
+}
+/* one-time: offer to move entries written before accounts existed (kept in this browser) into the account */
+function offerLocalMigration(){
+  let old={};try{old=JSON.parse(localStorage.getItem('journal.v1')||'{}')}catch(e){}
+  const ks=Object.keys(old).filter(k=>old[k]&&!old[k].sample&&old[k].text&&!J[k]);
+  if(!ks.length)return;
+  if(confirm(`Found ${ks.length} journal ${ks.length===1?'entry':'entries'} saved in this browser from before sign-in. Upload them to your account?`)){
+    migrating=true;ks.forEach(k=>{J[k]={text:old[k].text,emo:EMO[old[k].emo]?old[k].emo:null};dirty.add(k)});flush();render()}
+}
+
+/* =====================================================================
+   AUTH GATE — nothing renders until there is a session
+   ===================================================================== */
+const AU=document.getElementById('auth'),EM=document.getElementById('em'),PW=document.getElementById('pw'),AM=document.getElementById('amsg');
+let amode='in',recovering=/type=recovery/.test(location.hash);
+function msg(t,ok){AM.textContent=t||'';AM.className=ok?'ok':''}
+function showAuth(m){
+  amode=m;AU.style.display='block';msg('');PW.value='';
+  const go=document.getElementById('go'),mode=document.getElementById('mode'),fg=document.getElementById('forgot'),sub=document.getElementById('asub');
+  EM.style.display=(m==='recover'||m==='setup')?'none':'block';PW.style.display=m==='setup'?'none':'block';
+  PW.autocomplete=m==='in'?'current-password':'new-password';
+  PW.placeholder=m==='recover'?'new password (8+ characters)':'password';
+  mode.style.display=(m==='recover'||m==='setup')?'none':'inline';fg.style.display=m==='in'?'inline':'none';
+  go.style.display=m==='setup'?'none':'inline';
+  document.querySelector('#auth .btns').style.display=m==='setup'?'none':'block';
+  go.textContent=m==='up'?'create account':m==='recover'?'set new password':'sign in';
+  mode.textContent=m==='up'?'I have an account':'create account';
+  sub.textContent=m==='up'?'create your private journal':m==='recover'?'choose a new password':m==='setup'?'':'private journal · sign in';
+  if(m==='setup')msg('Not connected yet. Open config.js and paste your Supabase project URL and publishable key (see supabase-schema.sql for the table).');
+  setTimeout(()=>(m==='recover'?PW:EM).focus(),30);
+}
+async function submit(){
+  const email=EM.value.trim(),pw=PW.value;msg('');
+  if(amode!=='recover'&&!email){msg('enter your email');return}
+  if(pw.length<8){msg('password must be at least 8 characters');return}
+  msg('…',true);
+  try{
+    if(amode==='in'){const{data,error}=await sb.auth.signInWithPassword({email,password:pw});if(error)throw error;await enter(data.user)}
+    else if(amode==='up'){const{data,error}=await sb.auth.signUp({email,password:pw,options:{emailRedirectTo:location.href.split('#')[0]}});if(error)throw error;
+      if(data.session)await enter(data.user);else{showAuth('in');msg('Check your email to confirm the account, then sign in.',true)}}
+    else if(amode==='recover'){const{data,error}=await sb.auth.updateUser({password:pw});if(error)throw error;recovering=false;history.replaceState(null,'',location.pathname);await enter(data.user)}
+  }catch(err){msg(err.message||'something went wrong')}
+}
+document.getElementById('go').onclick=submit;
+[EM,PW].forEach(i=>i.addEventListener('keydown',e=>{if(e.key==='Enter')submit()}));
+document.getElementById('mode').onclick=()=>showAuth(amode==='up'?'in':'up');
+document.getElementById('forgot').onclick=async()=>{const email=EM.value.trim();if(!email){msg('enter your email first');return}
+  const{error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.href.split('#')[0]});
+  error?msg(error.message):msg('If that email has an account, a reset link is on its way.',true)};
+async function enter(u){
+  user=u;msg('');
+  try{await loadAll()}catch(err){showAuth('in');msg('Could not load your journal: '+err.message);return}
+  AU.style.display='none';render();offerLocalMigration();
+}
+async function signOut(){await flush();await sb.auth.signOut();user=null;J={};memo.clear();cur=null;D.style.display='none';veil.style.display='none';showAuth('in')}
+async function boot(){
+  if(!window.SUPABASE_URL||!window.SUPABASE_KEY||!window.supabase){showAuth('setup');return}
+  sb=supabase.createClient(window.SUPABASE_URL,window.SUPABASE_KEY);
+  sb.auth.onAuthStateChange(ev=>{if(ev==='PASSWORD_RECOVERY'){recovering=true;showAuth('recover')}});
+  const{data:{session}}=await sb.auth.getSession();
+  if(recovering){showAuth('recover');return}
+  session?await enter(session.user):showAuth('in');
+}
 
 /* =====================================================================
    PAPER (month view) — same crumpled-sheet renderer as the weather calendar,
@@ -199,9 +301,10 @@ function drawCtl(){
   else{const lab=span===0?'all years':`${endY-span+1}–${endY}`;
     nav=`<a id="p">« earlier</a><span class="title">${lab}</span><a id="n">later »</a><span class="sep">·</span>`+
       [3,5,10,0].map(s=>`<a data-s="${s}" class="${s===span?'on':''}">${s||'all'}</a>`).join(' ')}
-  c.innerHTML=views+'<span class="sep">·</span>'+nav+'<span class="sep">·</span><a data-go="today">today</a><span id="status"></span>';
+  c.innerHTML=views+'<span class="sep">·</span>'+nav+'<span class="sep">·</span><a data-go="today">today</a><span class="sep">·</span><span class="dim" style="font-weight:400">'+(user?esc(user.email||''):'')+'</span><a data-so class="dim">sign out</a><span id="status"></span>';
   c.querySelectorAll('[data-v]').forEach(a=>a.onclick=()=>{view=a.dataset.v;try{localStorage.setItem('jview',view)}catch(e){}render()});
   c.querySelectorAll('[data-s]').forEach(a=>a.onclick=()=>{span=+a.dataset.s;render()});
+  c.querySelector('[data-so]').onclick=signOut;
   c.querySelector('[data-go]').onclick=()=>{vy=TY;vm=TM;endY=TY;render()};
   const p=c.querySelector('#p'),n=c.querySelector('#n');
   p.onclick=()=>step(-1);n.onclick=()=>step(1);
@@ -305,8 +408,8 @@ function legend(h){
   const el=document.createElement('div');el.id='legend';el.style.top=(h+8)+'px';
   el.innerHTML=(n?`${n} ${n===1?'entry':'entries'} in view · ${chips}`:'no entries in view yet — click any day to write one.')+'<br>'+
     `<a data-t="exp" class="dim">export</a> · <a data-t="imp" class="dim">import</a> · `+
-    (hasSample?'<a data-t="clr" class="dim">remove sample data</a>':'<a data-t="smp" class="dim">load 4 years of sample entries</a>')+
-    ' · colour = tone of the writing (joy, calm, love, energy, sad, anxious, angry, tired) · deeper/more crumpled = stronger feeling · stored only in this browser';
+    (hasSample?'<a data-t="clr" class="dim">remove sample data</a>':'<a data-t="smp" class="dim">preview with 4 years of sample entries (not saved)</a>')+
+    ' · colour = tone of the writing (joy, calm, love, energy, sad, anxious, angry, tired) · deeper/more crumpled = stronger feeling · saved to your private account';
   V.appendChild(el);
   el.querySelectorAll('[data-t]').forEach(a=>a.onclick=()=>tool(a.dataset.t));
 }
@@ -314,10 +417,10 @@ function tool(t){
   if(t==='exp'){const b=new Blob([JSON.stringify(J,null,1)],{type:'application/json'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='journal.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
   if(t==='imp')document.getElementById('imp').click();
   if(t==='smp'){loadSample();render()}
-  if(t==='clr'){for(const k in J)if(J[k].sample)delete J[k];persist();render()}
+  if(t==='clr'){for(const k in J)if(J[k].sample)delete J[k];render()}
 }
 document.getElementById('imp').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();
-  r.onload=()=>{try{const o=JSON.parse(r.result);for(const k in o)if(/^\d{4}-\d\d-\d\d$/.test(k)&&o[k]&&typeof o[k].text==='string')J[k]={text:o[k].text,emo:EMO[o[k].emo]?o[k].emo:null,sample:!!o[k].sample};persist();render()}catch(err){alert('Could not read that file')}};r.readAsText(f)};
+  r.onload=()=>{try{const o=JSON.parse(r.result);for(const k in o)if(/^\d{4}-\d\d-\d\d$/.test(k)&&o[k]&&typeof o[k].text==='string'){J[k]={text:o[k].text,emo:EMO[o[k].emo]?o[k].emo:null,sample:!!o[k].sample};if(!J[k].sample)markDirty(k)}render()}catch(err){alert('Could not read that file')}};r.readAsText(f)};
 
 /* =====================================================================
    DRAWER
@@ -345,15 +448,15 @@ function paintTone(){
   }
   chips.innerHTML='<span style="color:#777">not quite right? </span>'+`<a data-e="" class="${!(e&&e.emo)?'on':''}">auto</a>`+
     ORDER.filter(k=>k!=='neutral').map(k=>`<a data-e="${k}" class="${e&&e.emo===k?'on':''}"><span class="sw" style="background:${hex(EMO[k].c)}"></span>${k}</a>`).join('');
-  chips.querySelectorAll('a').forEach(a=>a.onclick=()=>{if(!J[cur])J[cur]={text:TA.value};J[cur].emo=a.dataset.e||null;J[cur].sample=false;persist();paintTone()});
+  chips.querySelectorAll('a').forEach(a=>a.onclick=()=>{if(!J[cur]){if(!TA.value.trim())return;J[cur]={text:TA.value}}J[cur].emo=a.dataset.e||null;J[cur].sample=false;markDirty(cur);paintTone()});
 }
 TA.addEventListener('input',()=>{
   const t=TA.value;
   if(!t.trim()){delete J[cur]}
   else{const o=J[cur]||{};J[cur]={text:t,emo:o.emo||null}}
-  document.getElementById('saved').textContent='…';persist();paintTone();
+  markDirty(cur);paintTone();
 });
-document.getElementById('del').onclick=()=>{if(cur&&J[cur]&&confirm('Delete this entry?')){delete J[cur];TA.value='';persist();paintTone()}};
+document.getElementById('del').onclick=()=>{if(cur&&J[cur]&&confirm('Delete this entry?')){delete J[cur];TA.value='';markDirty(cur);paintTone()}};
 function moveDay(n){const p=parseKey(cur),d=new Date(p.y,p.m,p.d+n);openDay(keyOf(d.getFullYear(),d.getMonth(),d.getDate()))}
 document.getElementById('dprev').onclick=()=>moveDay(-1);document.getElementById('dnext').onclick=()=>moveDay(1);
 document.getElementById('dclose').onclick=closeDay;veil.onclick=closeDay;
@@ -386,7 +489,6 @@ function loadSample(){
     if(r()<.15)t+=' '+POOL.calm[r()*4|0];
     J[k]={text:t,emo:null,sample:true};
   }
-  persist();
 }
 /* hover-flip on month papers (same rules as the original site) */
 let mx=0,my=0,ox=0,oy=0,dir=1,timer=null,stopT=null,curImg=null;
@@ -401,7 +503,7 @@ function stopFlipNow(){clearTimeout(stopT);clearInterval(timer)}
   for(let k=0;k<5;k++){g.beginPath();for(let a=0;a<Math.PI*14;a+=.04){
     const rr=60+30*Math.sin(a*.37+k)+10*Math.sin(a*1.9+k*2),x=110+Math.cos(a+k*.4)*rr*1.6+(a*2.2-70),y=105+Math.sin(a*1.03+k*.4)*rr*.9;
     a?g.lineTo(x,y):g.moveTo(x,y)}g.stroke()}})();
-render();
+boot();
 </script>
 </body>
 </html>
